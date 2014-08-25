@@ -19,7 +19,7 @@ f(asd, [[string over
 
 @arr = @arr[1, 2, 3, 4, 5]
 
-	int func(int a,int b,int c) {
+	int func(  int abc , int d, int e ) {
 
 perlsub "asd","xy";
 -> perlsub"xy", "asd";

@@ -7,68 +7,56 @@ let g:argswap_quotes .= "|[["
 let g:argswap_quotes_end["[["] = "]]"
 
 
+let s:STAY = 0
+let s:COLUMN = 2
+
+let s:LEADING_SPACES  = 0
+let s:TRIMMED_TOKEN   = 1
+let s:TRAILING_SPACES = 2
+
+
+"
 " TODO quoted string, escaped quotes
 " Argswap(3, 8, 2)
 " command Argswap call argswap#Argswap(getline("."))
 " command Argswap call argswap#Argswap() range
 " TODO here-documents as arguments
-function! argswap#Argswap()
+"
 "function! argswap#Argswap(how)
 "	if !a:how:0
 "		a:how = [ 0, 1 ]
 "	end
+function! argswap#Argswap()
 	let line = getline(".")
 
-	" tokenize 
-	let [ tokens, positions ] = argswap#Tokenize(line)
-"	echo positions
-	echo tokens
+	let [ tokens, positions, inverse ] = argswap#Tokenize(line)
 
-	" TODO do not match quoted parantheses
-"	let tokens[0] = substitute(tokens[0], "^[^(]*(", "", "")
-	let tokens[len(tokens)-1] = substitute(tokens[len(tokens)-1], ").*$", "", "")
-	echo tokens
-
-	let [ b, l, c, o, x ] = getcurpos()
-	echo c
-
-	let pos = positions[c]
-	"let tmp = tokens[pos]
-	"let tokens[pos] = tokens[pos+1]
-	"let tokens[pos+1] = tmp
-	"unlet tmp
-	let pos2 = pos+1
 	let length = len(tokens)
-	let pos2 = pos2 % length
-	echo pos
-	echo pos2
 
-	echo "swap '" . tokens[pos] . "' with '" . tokens[pos2] . "'"
-	echo tokens
+	" delete trailing parentheses
+	let tokens[length-1] = substitute(tokens[length-1], ").*$", "", "")
+
+	let cursor = getcurpos()
+	let c = cursor[s:COLUMN]
+
+	let pos1 = positions[c]
+	let pos2 = pos1 + 1
+	let pos2 = pos2 % length
+
 	let oldtokens = deepcopy(tokens)
 
-	let norm_token_1 = substitute(tokens[pos],   '^\s\+\|\s\+$', "", "g")
-	let norm_token_2 = substitute(tokens[pos2], '^\s\+\|\s\+$', "", "g")
-	echo "nt1: " . norm_token_1
-	echo "nt2: " . norm_token_2
-	echo "substitute(" . tokens[pos] . ", " . norm_token_1 . ", " . norm_token_2 . ")"
-	let tokens[pos] = substitute(tokens[pos], norm_token_1, norm_token_2, "")
-	let tokens[pos2] = substitute(tokens[pos2], norm_token_2, norm_token_1, "")
-	echo tokens
-	let newarglist = substitute(line, join(oldtokens, ","), join(tokens, ",") , "")
-	echo line
-	echo newarglist
-
-
-	" 'func(asd, ", \" ", bcd) s/(\s*)(\w.[^,]+)(,\s*)(\w.[^,]+)/$1$4$3$2/
-	"let s:args = split(s:line, ",") ", 1)
-	"echo join(s:args, "||")
-
+	let token1 = argswap#SplitToken(tokens[pos1])
+	let token2 = argswap#SplitToken(tokens[pos2])
 	
-	"if s:args[0] =~ "("
-	"for e in s:args
-		
-	"endfor
+	let tokens[pos1] = substitute(tokens[pos1], token1[s:TRIMMED_TOKEN], token2[s:TRIMMED_TOKEN], "")
+	let tokens[pos2] = substitute(tokens[pos2], token2[s:TRIMMED_TOKEN], token1[s:TRIMMED_TOKEN], "")
+
+	let offset = argswap#CalcCursor(token1, token2, inverse[pos1][0], positions, line, c)
+
+	" TODO use \V to match exact string
+	"      (turn off special meanings as done with \Q in perl)
+	exec 's/\V' . join(oldtokens, ",") . '/' . join(tokens, ",")
+	call cursor(s:STAY, offset)
 endfunction
 
 function! argswap#Tokenize(string)
@@ -76,6 +64,7 @@ function! argswap#Tokenize(string)
 	let token = ""
 	let tokens = []
 	let positions = {}
+	let inverse = {}
 	for idx in range(strlen(a:string))
 		let char = a:string[idx]
 		if strlen(quoted)
@@ -92,19 +81,66 @@ function! argswap#Tokenize(string)
 		elseif char == "(" && len(tokens) == 0
 			let token = ""
 			let positions = {}
+			let inverse = {}
 			continue
+"		elseif char == ")"
+"			break
 		elseif char == ","
 			let tokens += [ token ]
 			let token = ""
 			continue
 		end
 		let token .= a:string[idx]
-		let positions[idx] = len(tokens)
+
+		let curtokidx = len(tokens)
+		let positions[idx] = curtokidx
+		if !exists("inverse[curtokidx]")
+			let inverse[curtokidx] = []
+		end
+		let inverse[curtokidx] += [ idx ]
 	endfor
 	if strlen(token) > 0
 		let tokens += [ token ]
 	end
 	
-	return [ tokens, positions ]
+	return [ tokens, positions, inverse ]
+endfunction
+
+function! argswap#SplitToken(token)
+	let result = matchlist(a:token, '^\(\s*\)\(.\{-1,}\)\(\s*\)$')
+
+	let arg = {}
+	let arg[s:LEADING_SPACES]  = result[1]
+	let arg[s:TRIMMED_TOKEN]   = result[2]
+	let arg[s:TRAILING_SPACES] = result[3]
+
+	return arg
+endfunction
+
+function! argswap#CalcCursor(token1, token2, start1, positions, line, cpos)
+	" 1. find cursor position in current argument
+	let x = a:cpos
+	while exists("a:positions[x-1]")
+		let x -= 1
+	endwhile
+	let y = x
+	while a:line[y] == " "
+		let y += 1
+	endwhile
+	let offset = a:cpos - y
+	" TODO handle case when cursor is at spaces of arg
+	if offset < 0
+		let offset = 0
+	end
+
+	" 2. calculate offset
+	let offset += a:start1
+	let offset += strlen(a:token1[s:LEADING_SPACES])
+	let offset += strlen(a:token2[s:TRIMMED_TOKEN])
+	let offset += strlen(a:token1[s:TRAILING_SPACES])
+	let offset += 1 " for the separating comma
+	let offset += strlen(a:token2[s:LEADING_SPACES])
+
+	return offset
 endfunction
 

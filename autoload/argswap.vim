@@ -14,6 +14,9 @@ let s:LEADING_SPACES  = 0
 let s:TRIMMED_TOKEN   = 1
 let s:TRAILING_SPACES = 2
 
+let s:FORWARD  = +1
+let s:BACKWARD = -1
+
 
 "
 " TODO quoted string, escaped quotes
@@ -26,7 +29,12 @@ let s:TRAILING_SPACES = 2
 "	if !a:how:0
 "		a:how = [ 0, 1 ]
 "	end
-function! argswap#Argswap()
+function! argswap#Argswap(...)
+	let direction = s:FORWARD
+	if a:0 > 0
+		let direction = a:1
+	end
+
 	let line = getline(".")
 
 	let [ tokens, positions, inverse ] = argswap#Tokenize(line)
@@ -40,7 +48,7 @@ function! argswap#Argswap()
 	let c = cursor[s:COLUMN]
 
 	let pos1 = positions[c]
-	let pos2 = pos1 + 1
+	let pos2 = pos1 + direction
 	let pos2 = pos2 % length
 
 	let oldtokens = deepcopy(tokens)
@@ -51,7 +59,11 @@ function! argswap#Argswap()
 	let tokens[pos1] = substitute(tokens[pos1], token1[s:TRIMMED_TOKEN], token2[s:TRIMMED_TOKEN], "")
 	let tokens[pos2] = substitute(tokens[pos2], token2[s:TRIMMED_TOKEN], token1[s:TRIMMED_TOKEN], "")
 
-	let offset = argswap#CalcCursor(token1, token2, inverse[pos1][0], positions, line, c)
+	let offset = s:STAY
+	if direction != 0
+		let start = inverse[direction > 0 ? pos1 : pos2][0]
+		let offset = argswap#CalcCursor(direction, token1, token2, start, positions, line, c)
+	end
 
 	" TODO use \V to match exact string
 	"      (turn off special meanings as done with \Q in perl)
@@ -117,7 +129,7 @@ function! argswap#SplitToken(token)
 	return arg
 endfunction
 
-function! argswap#CalcCursor(token1, token2, start1, positions, line, cpos)
+function! argswap#CalcCursor(direction, token1, token2, start, positions, line, cpos)
 	" 1. find cursor position in current argument
 	let x = a:cpos
 	while exists("a:positions[x-1]")
@@ -134,12 +146,19 @@ function! argswap#CalcCursor(token1, token2, start1, positions, line, cpos)
 	end
 
 	" 2. calculate offset
-	let offset += a:start1
-	let offset += strlen(a:token1[s:LEADING_SPACES])
-	let offset += strlen(a:token2[s:TRIMMED_TOKEN])
-	let offset += strlen(a:token1[s:TRAILING_SPACES])
-	let offset += 1 " for the separating comma
-	let offset += strlen(a:token2[s:LEADING_SPACES])
+	if a:direction > 0
+		let offset += a:start
+		let offset += strlen(a:token1[s:LEADING_SPACES])
+		let offset += strlen(a:token2[s:TRIMMED_TOKEN])
+		let offset += strlen(a:token1[s:TRAILING_SPACES])
+		let offset += 1 " for the separating comma
+		let offset += strlen(a:token2[s:LEADING_SPACES])
+	elseif a:direction < 0
+		let offset += a:start
+		let offset += strlen(a:token2[s:LEADING_SPACES])
+	else
+		let offset = s:STAY
+	end
 
 	return offset
 endfunction
